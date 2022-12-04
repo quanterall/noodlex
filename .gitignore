@@ -24,3 +24,6 @@ noodlex-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Output directory for Rustler
+/priv/native

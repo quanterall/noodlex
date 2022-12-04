@@ -1,3 +1,1 @@
-use Mix.Config
-
-config :noodlex, Noodlex, cargo: {:rustup, "stable"}
+Config.config(:noodlex, Noodlex, cargo: {:rustup, "stable"})
