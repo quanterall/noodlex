@@ -1,18 +1,5 @@
 defmodule Noodlex do
-  @moduledoc """
-  Documentation for `Noodlex`.
-  """
+  use Rustler, otp_app: :noodlex, crate: "noodlex"
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> Noodlex.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
+  def get_header(_path), do: :erlang.nif_error(:nif_not_loaded)
 end
