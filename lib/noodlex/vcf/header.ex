@@ -20,6 +20,14 @@ defmodule Noodlex.Vcf.Header do
           }
   end
 
+  defmodule Filter do
+    @enforce_keys [:id, :description]
+
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{id: String.t(), description: String.t()}
+  end
+
   @enforce_keys [:fileformat, :infos]
 
   defstruct @enforce_keys

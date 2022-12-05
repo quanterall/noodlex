@@ -1,7 +1,7 @@
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
+use std::sync;
 use std::{fs::File, io::BufReader};
-use std::{iter, sync};
 
 use noodles_vcf as vcf;
 use rustler::Env;
@@ -70,11 +70,12 @@ mod atoms {
         alternate_alleles,
         reference_and_alternate_alleles,
         genotypes,
+        pass,
     }
 }
 
 struct VcfHandle {
-    pub header: String,
+    pub header: sync::Mutex<vcf::Header>,
     pub stream: sync::Mutex<vcf::Reader<BufReader<File>>>,
 }
 
@@ -84,6 +85,13 @@ struct VcfInfo<'a> {
     pub id: Atom,
     pub number: Term<'a>,
     pub type_: Atom,
+    pub description: String,
+}
+
+#[derive(rustler::NifStruct)]
+#[module = "Noodlex.Vcf.Header.Filter"]
+struct VcfFilter {
+    pub id: String,
     pub description: String,
 }
 
@@ -99,6 +107,29 @@ struct FileFormat {
 struct VcfHeader<'a> {
     pub fileformat: FileFormat,
     pub infos: Term<'a>,
+    pub filters: Term<'a>,
+}
+
+#[derive(rustler::NifStruct)]
+#[module = "Noodlex.Vcf.Record"]
+struct VcfRecord {
+    pub chromosome: String,
+    pub position: usize,
+    pub ids: Vec<String>,
+    pub reference_bases: String,
+    pub alternate_bases: String,
+    // pub quality_score: f32,
+    pub filters: VcfRecordFilters,
+    // pub info: Term<'a>,
+    // pub format: Term<'a>,
+    // pub genotypes: Term<'a>,
+}
+
+#[derive(rustler::NifTaggedEnum)]
+enum VcfRecordFilters {
+    None,
+    Pass,
+    Fail(Vec<String>),
 }
 
 fn load(env: rustler::Env, _info: rustler::Term) -> bool {
@@ -133,13 +164,22 @@ fn get_handle(path: String) -> Result<ResourceArc<VcfHandle>, RustlerError> {
     let mut vcf_reader = vcf::Reader::new(reader);
     let header_result = vcf_reader.read_header();
     let header = handle_io_error!(header_result);
-    let mutex = sync::Mutex::new(vcf_reader);
-    let resource_arc = ResourceArc::new(VcfHandle {
-        header,
-        stream: mutex,
-    });
+    match header.parse::<vcf::header::Header>() {
+        Ok(header) => {
+            let mutex = sync::Mutex::new(vcf_reader);
+            let header_mutex = sync::Mutex::new(header);
+            let resource_arc = ResourceArc::new(VcfHandle {
+                header: header_mutex,
+                stream: mutex,
+            });
 
-    Ok(resource_arc)
+            Ok(resource_arc)
+        }
+        Err(err) => {
+            let error = format!("Error parsing header: {}", err);
+            Err(RustlerError::Term(Box::new(error)))
+        }
+    }
 }
 
 #[rustler::nif]
@@ -147,57 +187,106 @@ fn get_header<'a>(
     env: Env<'a>,
     handle: ResourceArc<VcfHandle>,
 ) -> Result<VcfHeader<'a>, RustlerError> {
-    match handle.header.parse::<vcf::header::Header>() {
-        Ok(header) => {
-            let fileformat = FileFormat {
-                major: header.file_format().major(),
-                minor: header.file_format().minor(),
-            };
-            let mut infos_vector = Vec::new();
-            for (key, value) in header.infos() {
-                    let id = Atom::from_str(env, &key.to_string()).unwrap();
-                    let number = match value.number() {
-                        vcf::header::Number::Count(_count) => atoms::unknown().to_term(env),
-                        vcf::header::Number::A => atoms::alternate_alleles().to_term(env),
-                        vcf::header::Number::R => {
-                            atoms::reference_and_alternate_alleles().to_term(env)
-                        }
-                        vcf::header::Number::G => atoms::genotypes().to_term(env),
-                        vcf::header::Number::Unknown => atoms::unknown().to_term(env),
-                    };
-                    let type_ = match value.ty() {
-                        vcf::header::info::ty::Type::Integer => atoms::integer(),
-                        vcf::header::info::ty::Type::Float => atoms::float(),
-                        vcf::header::info::ty::Type::Flag => atoms::flag(),
-                        vcf::header::info::ty::Type::Character => atoms::character(),
-                        vcf::header::info::ty::Type::String => atoms::string(),
-                    };
-                    let description = value.description().to_string();
+    let header = handle.header.lock().unwrap();
+    let fileformat = FileFormat {
+        major: header.file_format().major(),
+        minor: header.file_format().minor(),
+    };
+    let mut infos_vector = Vec::new();
+    for (key, value) in header.infos() {
+        let id = Atom::from_str(env, &key.to_string()).unwrap();
+        let number = match value.number() {
+            vcf::header::Number::Count(_count) => atoms::unknown().to_term(env),
+            vcf::header::Number::A => atoms::alternate_alleles().to_term(env),
+            vcf::header::Number::R => atoms::reference_and_alternate_alleles().to_term(env),
+            vcf::header::Number::G => atoms::genotypes().to_term(env),
+            vcf::header::Number::Unknown => atoms::unknown().to_term(env),
+        };
+        let type_ = match value.ty() {
+            vcf::header::info::ty::Type::Integer => atoms::integer(),
+            vcf::header::info::ty::Type::Float => atoms::float(),
+            vcf::header::info::ty::Type::Flag => atoms::flag(),
+            vcf::header::info::ty::Type::Character => atoms::character(),
+            vcf::header::info::ty::Type::String => atoms::string(),
+        };
+        let description = value.description().to_string();
 
-                    infos_vector.push((
-                        id,
-                        VcfInfo {
-                            id,
-                            number,
-                            type_,
-                            description,
-                        },
-                    ));
-            };
-            match Term::map_from_pairs(env, &infos_vector) {
-                Ok(infos) => Ok(VcfHeader { fileformat, infos }),
-                Err(_) => Err(RustlerError::Term(Box::new(atoms::error()))),
-            }
-        }
-        Err(err) => Err(RustlerError::Term(Box::new(err.to_string()))),
+        infos_vector.push((
+            Atom::from_str(env, &key.to_string()).unwrap(),
+            VcfInfo {
+                id,
+                number,
+                type_,
+                description,
+            },
+        ));
+    }
+    let mut filters_vector = Vec::new();
+    for (key, value) in header.filters() {
+        filters_vector.push((
+            key.to_string(),
+            VcfFilter {
+                id: key.to_string(),
+                description: value.description().to_string(),
+            },
+        ));
+    }
+    match (
+        Term::map_from_pairs(env, &infos_vector),
+        Term::map_from_pairs(env, &filters_vector),
+    ) {
+        (Ok(infos), Ok(filters)) => Ok(VcfHeader {
+            fileformat,
+            infos,
+            filters,
+        }),
+        _ => Err(RustlerError::Term(Box::new(atoms::error()))),
     }
 }
 
 #[rustler::nif]
-fn get_record(handle: ResourceArc<VcfHandle>) -> Result<String, RustlerError> {
+fn get_record<'a>(handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerError> {
     let mut buf = String::new();
     let _record_result = handle.stream.lock().unwrap().read_record(&mut buf);
-    Ok(buf)
+    let parsed_record = vcf::record::Record::try_from_str(&buf, &handle.header.lock().unwrap());
+    match parsed_record {
+        Ok(record) => {
+            let chromosome = record.chromosome().to_string();
+            let position = record.position().into();
+            let ids = record.ids().iter().map(|id| id.to_string()).collect();
+            let reference_bases = record.reference_bases().to_string();
+            let alternate_bases = record.alternate_bases().to_string();
+            // let quality_score = record
+            //     .quality_score()
+            //     .unwrap_or("0.0".parse().unwrap())
+            //     .into();
+            let filters = match record.filters() {
+                Some(filters) => match filters {
+                    vcf::record::filters::Filters::Pass => VcfRecordFilters::Pass,
+                    vcf::record::filters::Filters::Fail(filters) => {
+                        VcfRecordFilters::Fail(filters.iter().map(|f| f.to_string()).collect())
+                    }
+                },
+                None => VcfRecordFilters::None,
+            };
+
+            return Ok(VcfRecord {
+                chromosome,
+                position,
+                ids,
+                reference_bases,
+                alternate_bases,
+                // quality_score,
+                filters,
+                // info,
+                // format,
+                // genotypes,
+            });
+        }
+        Err(err) => Err(RustlerError::Term(Box::new(
+            "hello".to_owned() + &err.to_string(),
+        ))),
+    }
 }
 
 rustler::init!(
