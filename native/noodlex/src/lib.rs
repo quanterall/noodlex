@@ -118,7 +118,7 @@ struct VcfRecord {
     pub ids: Vec<String>,
     pub reference_bases: String,
     pub alternate_bases: String,
-    // pub quality_score: f32,
+    pub quality_score: Option<f32>,
     pub filters: VcfRecordFilters,
     // pub info: Term<'a>,
     // pub format: Term<'a>,
@@ -256,10 +256,10 @@ fn get_record<'a>(handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerEr
             let ids = record.ids().iter().map(|id| id.to_string()).collect();
             let reference_bases = record.reference_bases().to_string();
             let alternate_bases = record.alternate_bases().to_string();
-            // let quality_score = record
-            //     .quality_score()
-            //     .unwrap_or("0.0".parse().unwrap())
-            //     .into();
+            let quality_score = record
+                .quality_score()
+                .map(f32::from)
+                .into();
             let filters = match record.filters() {
                 Some(filters) => match filters {
                     vcf::record::filters::Filters::Pass => VcfRecordFilters::Pass,
@@ -276,7 +276,7 @@ fn get_record<'a>(handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerEr
                 ids,
                 reference_bases,
                 alternate_bases,
-                // quality_score,
+                quality_score,
                 filters,
                 // info,
                 // format,
