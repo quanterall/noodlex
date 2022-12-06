@@ -112,7 +112,7 @@ struct VcfHeader<'a> {
 
 #[derive(rustler::NifStruct)]
 #[module = "Noodlex.Vcf.Record"]
-struct VcfRecord {
+struct VcfRecord<'a> {
     pub chromosome: String,
     pub position: usize,
     pub ids: Vec<String>,
@@ -120,8 +120,8 @@ struct VcfRecord {
     pub alternate_bases: String,
     pub quality_score: Option<f32>,
     pub filters: VcfRecordFilters,
-    // pub info: Term<'a>,
-    // pub format: Term<'a>,
+    pub info: Term<'a>,
+    pub format: Vec<String>,
     // pub genotypes: Term<'a>,
 }
 
@@ -245,7 +245,7 @@ fn get_header<'a>(
 }
 
 #[rustler::nif]
-fn get_record<'a>(handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerError> {
+fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerError> {
     let mut buf = String::new();
     let _record_result = handle.stream.lock().unwrap().read_record(&mut buf);
     let parsed_record = vcf::record::Record::try_from_str(&buf, &handle.header.lock().unwrap());
@@ -256,10 +256,7 @@ fn get_record<'a>(handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerEr
             let ids = record.ids().iter().map(|id| id.to_string()).collect();
             let reference_bases = record.reference_bases().to_string();
             let alternate_bases = record.alternate_bases().to_string();
-            let quality_score = record
-                .quality_score()
-                .map(f32::from)
-                .into();
+            let quality_score = record.quality_score().map(f32::from).into();
             let filters = match record.filters() {
                 Some(filters) => match filters {
                     vcf::record::filters::Filters::Pass => VcfRecordFilters::Pass,
@@ -269,6 +266,20 @@ fn get_record<'a>(handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerEr
                 },
                 None => VcfRecordFilters::None,
             };
+            let info_keys: Vec<String> = record.info().keys().map(|k| k.to_string()).collect();
+            let info_values: Vec<String> = record
+                .info()
+                .values()
+                .map(|v| v.to_string())
+                .collect();
+            let info = Term::map_from_arrays(env, &info_keys, &info_values).unwrap();
+            let format = record.format().iter().map(|k| k.to_string()).collect();
+            // let genotypes_vec = record
+            //     .genotypes()
+            //     .iter()
+            //     .map(|genotype| genotype.keys())
+            //     .collect();
+            // let genotypes = Term::map_from_pairs(env, &genotypes_vec).unwrap();
 
             return Ok(VcfRecord {
                 chromosome,
@@ -278,8 +289,8 @@ fn get_record<'a>(handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerEr
                 alternate_bases,
                 quality_score,
                 filters,
-                // info,
-                // format,
+                info,
+                format,
                 // genotypes,
             });
         }
