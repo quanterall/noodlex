@@ -71,6 +71,7 @@ mod atoms {
         reference_and_alternate_alleles,
         genotypes,
         pass,
+        end_of_file,
     }
 }
 
@@ -247,10 +248,11 @@ fn get_header<'a>(
 #[rustler::nif]
 fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRecord, RustlerError> {
     let mut buf = String::new();
-    let _record_result = handle.stream.lock().unwrap().read_record(&mut buf);
+    let _bytes_read = handle.stream.lock().unwrap().read_record(&mut buf).unwrap();
     let parsed_record = vcf::record::Record::try_from_str(&buf, &handle.header.lock().unwrap());
-    match parsed_record {
-        Ok(record) => {
+    match (buf.is_empty(), parsed_record) {
+        (true, _) => Err(RustlerError::Term(Box::new(atoms::end_of_file()))),
+        (_is_empty, Ok(record)) => {
             let chromosome = record.chromosome().to_string();
             let position = record.position().into();
             let ids = record.ids().iter().map(|id| id.to_string()).collect();
@@ -267,11 +269,7 @@ fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRec
                 None => VcfRecordFilters::None,
             };
             let info_keys: Vec<String> = record.info().keys().map(|k| k.to_string()).collect();
-            let info_values: Vec<String> = record
-                .info()
-                .values()
-                .map(|v| v.to_string())
-                .collect();
+            let info_values: Vec<String> = record.info().values().map(|v| v.to_string()).collect();
             let info = Term::map_from_arrays(env, &info_keys, &info_values).unwrap();
             let format = record.format().iter().map(|k| k.to_string()).collect();
             // let genotypes_vec = record
@@ -294,7 +292,7 @@ fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRec
                 // genotypes,
             });
         }
-        Err(err) => Err(RustlerError::Term(Box::new(
+        (_is_empty, Err(err)) => Err(RustlerError::Term(Box::new(
             "hello".to_owned() + &err.to_string(),
         ))),
     }
