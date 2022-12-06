@@ -292,14 +292,83 @@ fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRec
                 // genotypes,
             });
         }
-        (_is_empty, Err(err)) => Err(RustlerError::Term(Box::new(
-            "hello".to_owned() + &err.to_string(),
-        ))),
+        (_is_empty, Err(err)) => Err(RustlerError::Term(Box::new(err.to_string()))),
+    }
+}
+
+#[rustler::nif]
+fn get_records<'a>(
+    env: Env<'a>,
+    handle: ResourceArc<VcfHandle>,
+    count: usize,
+) -> Result<Vec<VcfRecord>, RustlerError> {
+    let mut buf = String::new();
+    let mut result_vector = Vec::new();
+    result_vector.reserve(count);
+    let mut first_read = true;
+    let mut rustler_error = None;
+    let mut stream = handle.stream.lock().unwrap();
+    let mut end_of_file = false;
+    let header = handle.header.lock().unwrap();
+
+    while first_read || rustler_error.is_none() && result_vector.len() < count && !end_of_file {
+        first_read = false;
+        let _bytes_read = stream.read_record(&mut buf).unwrap();
+        let parsed_record = vcf::record::Record::try_from_str(&buf, &header);
+        match (buf.is_empty(), parsed_record) {
+            (true, _) => {
+                end_of_file = true;
+            },
+            (_is_empty, Ok(record)) => {
+                let chromosome = record.chromosome().to_string();
+                let position = record.position().into();
+                let ids = record.ids().iter().map(|id| id.to_string()).collect();
+                let reference_bases = record.reference_bases().to_string();
+                let alternate_bases = record.alternate_bases().to_string();
+                let quality_score = record.quality_score().map(f32::from).into();
+                let filters = match record.filters() {
+                    Some(filters) => match filters {
+                        vcf::record::filters::Filters::Pass => VcfRecordFilters::Pass,
+                        vcf::record::filters::Filters::Fail(filters) => {
+                            VcfRecordFilters::Fail(filters.iter().map(|f| f.to_string()).collect())
+                        }
+                    },
+                    None => VcfRecordFilters::None,
+                };
+                let info_keys: Vec<String> = record.info().keys().map(|k| k.to_string()).collect();
+                let info_values: Vec<String> =
+                    record.info().values().map(|v| v.to_string()).collect();
+                let info = Term::map_from_arrays(env, &info_keys, &info_values).unwrap();
+                let format = record.format().iter().map(|k| k.to_string()).collect();
+
+                result_vector.push(VcfRecord {
+                    chromosome,
+                    position,
+                    ids,
+                    reference_bases,
+                    alternate_bases,
+                    quality_score,
+                    filters,
+                    info,
+                    format,
+                });
+                buf.clear();
+            }
+            (_is_empty, Err(err)) => {
+                println!("err: {} | buf: {}", err, buf);
+                rustler_error = Some(RustlerError::Term(Box::new(err.to_string())))
+            }
+        }
+    }
+
+    match rustler_error {
+        Some(err) => Err(err),
+        None => Ok(result_vector),
     }
 }
 
 rustler::init!(
     "Elixir.Noodlex.Vcf",
-    [get_handle, get_header, get_record],
+    [get_handle, get_header, get_record, get_records],
     load = load
 );
