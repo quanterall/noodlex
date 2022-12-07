@@ -8,7 +8,8 @@ defmodule Noodlex.Vcf.Record do
     :info,
     :position,
     :quality_score,
-    :reference_bases
+    :reference_bases,
+    :genotypes
   ]
 
   defstruct @enforce_keys
@@ -24,6 +25,7 @@ defmodule Noodlex.Vcf.Record do
           info: %{String.t() => String.t()},
           position: integer(),
           quality_score: float(),
-          reference_bases: String.t()
+          reference_bases: String.t(),
+          genotypes: %{String.t() => String.t()}
         }
 end
