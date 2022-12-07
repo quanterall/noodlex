@@ -23,7 +23,7 @@ defmodule Noodlex.VcfTest do
     end_time = :os.system_time(:millisecond)
     diff_time = end_time - start_time
 
-    assert diff_time < 80
+    assert diff_time < 100
     IO.puts("Time elapsed for single-item read: #{diff_time} ms")
   end
 
@@ -42,7 +42,7 @@ defmodule Noodlex.VcfTest do
     diff_time = end_time - start_time
 
     assert length(records1) == 2588
-    assert diff_time < 80
+    assert diff_time < 100
     IO.puts("Time elapsed for batched read: #{diff_time} ms")
   end
 
