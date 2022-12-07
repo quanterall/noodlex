@@ -36,7 +36,7 @@ defmodule Noodlex.VcfTest do
 
     start_time = :os.system_time(:millisecond)
 
-    records1 = Noodlex.Vcf.get_records(handle, 100_000)
+    records1 = read_all_records(handle, [])
 
     end_time = :os.system_time(:millisecond)
     diff_time = end_time - start_time
@@ -44,5 +44,31 @@ defmodule Noodlex.VcfTest do
     assert length(records1) == 2588
     assert diff_time < 80
     IO.puts("Time elapsed for batched read: #{diff_time} ms")
+  end
+
+  defp get_batch(handle, batch, 1_000) do
+    batch
+  end
+
+  defp get_batch(handle, batch, count) do
+    case Noodlex.Vcf.get_record(handle) do
+      %Noodlex.Vcf.Record{} = record ->
+        get_batch(handle, [record | batch], count + 1)
+
+      {:error, :end_of_file} ->
+        batch
+    end
+  end
+
+  defp read_all_records(handle), do: read_all_records(handle, [])
+
+  defp read_all_records(handle, results) do
+    case get_batch(handle, [], 0) do
+      [] ->
+        results
+
+      batch ->
+        read_all_records(handle, results ++ batch)
+    end
   end
 end

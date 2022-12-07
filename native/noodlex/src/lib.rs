@@ -1,5 +1,6 @@
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
+use std::ops::Deref;
 use std::sync;
 use std::{fs::File, io::BufReader};
 
@@ -123,7 +124,7 @@ struct VcfRecord<'a> {
     pub filters: VcfRecordFilters,
     pub info: Term<'a>,
     pub format: Vec<String>,
-    // pub genotypes: Term<'a>,
+    pub genotypes: Term<'a>,
 }
 
 #[derive(rustler::NifTaggedEnum)]
@@ -272,12 +273,19 @@ fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRec
             let info_values: Vec<String> = record.info().values().map(|v| v.to_string()).collect();
             let info = Term::map_from_arrays(env, &info_keys, &info_values).unwrap();
             let format = record.format().iter().map(|k| k.to_string()).collect();
-            // let genotypes_vec = record
-            //     .genotypes()
-            //     .iter()
-            //     .map(|genotype| genotype.keys())
-            //     .collect();
-            // let genotypes = Term::map_from_pairs(env, &genotypes_vec).unwrap();
+            let genotypes_pairs: Vec<(String, String)> = record
+                .genotypes()
+                .deref()
+                .iter()
+                .map(|v| {
+                    let map = v.deref();
+                    let keys = map.keys().map(|k| k.to_string());
+                    let values = map.values().map(|v| v.to_string());
+                    keys.zip(values)
+                })
+                .flatten()
+                .collect();
+            let genotypes = Term::map_from_pairs(env, &genotypes_pairs).unwrap();
 
             return Ok(VcfRecord {
                 chromosome,
@@ -289,7 +297,7 @@ fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRec
                 filters,
                 info,
                 format,
-                // genotypes,
+                genotypes,
             });
         }
         (_is_empty, Err(err)) => Err(RustlerError::Term(Box::new(err.to_string()))),
@@ -318,7 +326,7 @@ fn get_records<'a>(
         match (buf.is_empty(), parsed_record) {
             (true, _) => {
                 end_of_file = true;
-            },
+            }
             (_is_empty, Ok(record)) => {
                 let chromosome = record.chromosome().to_string();
                 let position = record.position().into();
@@ -340,6 +348,8 @@ fn get_records<'a>(
                     record.info().values().map(|v| v.to_string()).collect();
                 let info = Term::map_from_arrays(env, &info_keys, &info_values).unwrap();
                 let format = record.format().iter().map(|k| k.to_string()).collect();
+                let genotypes_pairs: Vec<(String, String)> = Vec::new();
+                let genotypes = Term::map_from_pairs(env, &genotypes_pairs).unwrap();
 
                 result_vector.push(VcfRecord {
                     chromosome,
@@ -351,6 +361,7 @@ fn get_records<'a>(
                     filters,
                     info,
                     format,
+                    genotypes,
                 });
                 buf.clear();
             }
