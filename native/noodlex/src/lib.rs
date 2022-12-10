@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::ops::Deref;
@@ -271,7 +272,7 @@ fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRec
             };
             let info_keys: Vec<String> = record.info().keys().map(|k| k.to_string()).collect();
             let info_values: Vec<String> = record.info().values().map(|v| v.to_string()).collect();
-            let info = Term::map_from_arrays(env, &info_keys, &info_values).unwrap();
+            let info = Term::map_from_arrays(env, &info_keys, &info_values)?;
             let format = record.format().iter().map(|k| k.to_string()).collect();
             let genotypes_pairs: Vec<(String, String)> = record
                 .genotypes()
@@ -284,8 +285,9 @@ fn get_record<'a>(env: Env<'a>, handle: ResourceArc<VcfHandle>) -> Result<VcfRec
                     keys.zip(values)
                 })
                 .flatten()
+                .unique_by(|(k, _v)| k.to_string())
                 .collect();
-            let genotypes = Term::map_from_pairs(env, &genotypes_pairs).unwrap();
+            let genotypes = Term::map_from_pairs(env, &genotypes_pairs)?;
 
             return Ok(VcfRecord {
                 chromosome,
